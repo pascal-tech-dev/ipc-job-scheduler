@@ -1,0 +1,27 @@
+
+{
+    "name": "ipc-job-scheduler",
+  
+    "build": {
+      "dockerfile": "Dockerfile",
+      "context": ".."
+    },  
+    "customizations": {
+      "vscode": {
+        "extensions": [
+          "ms-vscode.cmake-tools",
+          "esbenp.prettier-vscode",
+          "ms-vscode.cpptools",
+          "ms-vscode.makefile-tools",
+          "mermaidchart.vscode-mermaid-chart"
+        ]
+      }
+    },
+  
+    "runArgs": [
+      "--name=ipc-job-scheduler"
+    ],
+  
+    "remoteUser": "root"
+}
+  
