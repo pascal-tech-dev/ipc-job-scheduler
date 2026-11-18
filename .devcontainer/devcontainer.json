@@ -9,6 +9,7 @@
     "customizations": {
       "vscode": {
         "extensions": [
+          "openai.chatgpt",
           "ms-vscode.cmake-tools",
           "esbenp.prettier-vscode",
           "ms-vscode.cpptools",

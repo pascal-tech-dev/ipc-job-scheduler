@@ -1,0 +1,368 @@
+CENG 536 — Advanced Unix — Homework 1
+=====================================
+
+Topic: IPC socket-based computation resource assignment system (job manager)
+
+Contents
+========
+
+1. Description
+2. Application
+3. Shared Memory and Synchronization
+4. Execution
+5. Communication
+6. Submission and Questions
+
+========================================================================
+
+1. Description
+==============
+
+In this homework, you will write an IPC socket-based computation resource assignment system, a job manager, for a computing facility.
+
+Assume there are m processor types (e.g., GPU, AMD, Intel CPU). Each node n_j contains a number of processors of each kind, represented as a vector. For example:
+
+n_j = ⟨0, 4, 0, 3⟩
+
+The example denotes the processor quantities available on node j for each processor type.
+
+Users of the facility connect to the system and submit jobs with a given set of required processors and an expected completion time t. A request has the format:
+
+⟨p0, p1, p2, p3, t⟩
+
+Here, p0, p1, p2, and p3 are the numbers of processors required for each type, and t is the requested completion time.
+
+The system allocates processors from available nodes for t time units. Jobs must complete before t; otherwise, the scheduler terminates them after t.
+
+Processors of different types in a request may be assigned from different nodes. However, all processors requested for a particular type must come from the same node.
+
+Example: Two identical nodes with capacities:
+
+Node 0: ⟨5, 0, 3, 3⟩
+Node 1: ⟨5, 0, 3, 3⟩
+
+cannot fulfill a request for 6 processors of type 0, because no single node has 6 of that type.
+
+However, the request:
+
+⟨2, 0, 2, 0⟩
+
+can be assigned as follows:
+
+- Node 0 supplies the 2 processors of type 0.
+- Node 1 supplies the 2 processors of type 2.
+
+Remaining resources:
+
+Node 0: ⟨3, 0, 3, 3⟩
+Node 1: ⟨5, 0, 1, 3⟩
+
+1.1. User connections and jobs
+------------------------------
+
+The user connection is interactive. Users can:
+
+- Submit jobs.
+- Inspect system status.
+- Receive notifications when jobs start.
+- Stop an active job through their connection.
+
+A user/connection can have only one job at a time. The user must cancel or stop the current job before submitting a new one.
+
+1.2. Job scheduling criteria
+----------------------------
+
+When the jobs in the wait queue exceed the processor capacity of the facility, the scheduler must select the next job using three criteria:
+
+1. Waiting time: Time spent in the queue by the job.
+2. Processor requirement: Number of processors required by the job.
+3. Expected completion time: Requested duration of the job.
+
+The last two criteria may be multiplied to calculate the total processor budget of a job.
+
+The selection rules are applied in the following order.
+
+Rule 1 — Maximum waiting time (MAX = 10000)
+
+If one or more jobs have waited for MAX time units or longer (w ≥ MAX), the job with the maximum waiting time has top priority.
+
+If this job cannot be assigned because the required processors are unavailable, no other job is assigned. This prevents that job from starving indefinitely.
+
+Rule 2 — Only feasible jobs are considered
+
+If no job has waited for MAX time units, consider only feasible jobs. A job is feasible when, for every requested processor type k, at least one node j has enough free processors of that type:
+
+r_k ≤ n_(j,k)
+
+All other waiting jobs are ignored during this selection.
+
+Rule 3 — Best in both criteria
+
+Compare feasible jobs using waiting time and processor budget. If a job has both the maximum waiting time and minimum processor budget, assign it.
+
+Rule 4 — Dominance count
+
+If no job is better in both criteria, compare all pairs of feasible jobs. Each job receives a dominance count equal to the number of other jobs it dominates (is better in both criteria).
+
+Rule 5 — Tie-breaking score
+
+Among jobs with the best dominance count, calculate:
+
+score = wait − budget
+
+The job with the minimum value of this expression wins and is assigned.
+
+1.3. When scheduling occurs
+---------------------------
+
+Job assignment is performed whenever:
+
+- A new job arrives.
+- A job terminates.
+
+A running job is never preempted before its declared completion time.
+
+========================================================================
+
+2. Application
+==============
+
+The application uses stream sockets and a multi-process server architecture.
+
+- A master process accepts incoming connections.
+- Each of the c client connections is handled by a separate agent process.
+- Agent processes serve users and simulate job execution.
+
+2.1. Client commands
+--------------------
+
+Command | Description
+SUBMIT complete P1 P2 ... Pm | Submit a job for complete time units, requesting the specified number of processors of each type. The client is notified when the job starts, including assigned node identifiers.
+STOP | Delete the current submitted job. If it is running, stop it and release its processor resources for another job.
+REPORT | Return the full scheduler report: running jobs, free processors on each node, waiting jobs, and their waiting times.
+QUIT | Close the connection, remove its jobs and connection information from all data structures, and terminate the agent. Closing the connection has the same effect as QUIT.
+
+2.2. Shared state and limits
+----------------------------
+
+Because the server is multi-process, scheduler information and job data must be kept in shared memory.
+
+- The maximum number of jobs is defined by the C macro MAXJOBS = 10000.
+- The same number is also the maximum number of connections.
+- The number of processor types m, number of nodes, and node configuration are supplied as input.
+- Shared memory must have sufficient space for the corresponding data structures and synchronization information.
+
+2.3. Processes and threads
+--------------------------
+
+Multithreading may be used within each process, but the master and agents must remain separate processes.
+
+In particular, each agent needs two threads:
+
+1. A thread that blocks while reading socket input.
+2. A thread that handles timeouts and notifications about job assignment and job termination.
+
+========================================================================
+
+3. Shared Memory and Synchronization
+====================================
+
+The master creates the shared memory before it calls fork(). The child agent processes then inherit the shared memory mapping.
+
+3.1. Shared memory allocation
+-----------------------------
+
+An anonymous memory mapping using mmap() is recommended:
+
+- Use MAP_ANONYMOUS.
+- No persistence or backing file is required.
+- The shared memory size should be a multiple of 4096 bytes.
+
+Alternatively, shmget() may be used.
+
+It is recommended to organize related data into logical groups and allocate one or more fixed-size shared memory regions, taking into account the connection limit and other known parameters.
+
+3.2. Allocation within shared memory
+------------------------------------
+
+Traditional heap allocators such as malloc() and new do not allocate objects in the shared memory region.
+
+You must implement simple allocators for the assignment. For example, connection information can be stored by finding and using an available slot in a connection-structure array located in shared memory.
+
+3.3. Synchronization across processes
+-------------------------------------
+
+Semaphores can synchronize multiple processes. For condition-variable-style waiting and notifications, the assignment recommends POSIX pthread mutexes and condition variables with the attribute:
+
+PTHREAD_PROCESS_SHARED
+
+Mutexes and condition variables must be stored in shared memory and configured to be shared between processes.
+
+Relevant manual pages:
+
+man pthread_mutexattr_setpshared
+man pthread_condattr_setpshared
+
+The pthread library also supports timeout-based waiting, allowing timing and waiting to be handled in one call.
+
+========================================================================
+
+4. Execution
+============
+
+Compile the application to an executable named hw1.
+
+4.1. Command-line syntax
+------------------------
+
+./hw1 conn
+
+conn is the address on which the master process listens:
+
+- If it begins with @, it specifies a Unix-domain socket path.
+- Otherwise, it must be an IPv4 address and port in the format ip:port.
+
+4.2. Configuration from standard input
+--------------------------------------
+
+The master reads its configuration from stdin in this format:
+
+M N                       # Number of processor types and number of nodes
+P0 P1 P2 ... P[M-1]      # Processor counts for Node 0
+P0 P1 P2 ... P[M-1]      # Processor counts for Node 1
+...
+P0 P1 P2 ... P[M-1]      # Processor counts for Node N-1
+
+- M is the number of processor types.
+- N is the number of nodes.
+- The next N lines each contain M processor counts, one line per node.
+
+Basic time unit: 1 millisecond (1/1000 of a second).
+
+========================================================================
+
+5. Communication
+================
+
+Clients send the commands defined in Section 2.1. Agents send responses and asynchronous notifications.
+
+5.1. Connection identification
+------------------------------
+
+When a connection is established, the agent sends its process ID (PID) as text to the client. That PID is used as the connection ID.
+
+5.2. Job submission response
+----------------------------
+
+For a SUBMIT request, the agent replies:
+
+OK
+
+5.3. Job-start notification
+---------------------------
+
+When resources are assigned to the job, the client receives a notification such as:
+
+Job started at: <0 - 0 1>, completion in 100
+
+In this example:
+
+- Processor types 0 and 2 are assigned from Node 0.
+- Processor type 3 is assigned from Node 1.
+- A hyphen (-) means that the corresponding processor type was not requested.
+- The declared completion time is 100 milliseconds.
+
+5.4. Completion-time notification
+---------------------------------
+
+If the job reaches its declared completion time, the scheduler cancels it and sends:
+
+Active job is terminated by completion time
+
+5.5. `REPORT` output format
+---------------------------
+
+The report must follow this layout:
+
+%d nodes, %d jobs running, %d jobs waiting
+Node  Assignment
+----------------
+%4d   %4d/%4d
+...
+
+Active Jobs:
+Conn.     Running    Remaining  Assigned Nodes
+------------------------------------
+%10d      %10d       %10d       %3d %3d %3d ...
+...
+
+Waiting Jobs:
+Conn.     Waiting   Requested Nodes
+------------------------------------
+%10d      %10d       %3d %3d %3d ...
+...
+
+average wait time: %.2f
+waiting list:
+
+Report rules:
+
+- Running, Remaining, and Waiting are measured in the basic time unit (milliseconds).
+- Nodes are sorted by their input node IDs.
+- Active jobs are sorted by remaining time in increasing order.
+- Waiting jobs are sorted by waiting time in decreasing order.
+- The Assigned Nodes column displays - for processor types that were not requested.
+
+========================================================================
+
+6. Submission and Questions
+===========================
+
+Submit through odtuclass.
+
+6.1. Required submission structure
+----------------------------------
+
+Provide a .tar.gz archive containing a directory called hw1 with a makefile that builds the executable hw1 in the current directory.
+
+Do not place the compiled executable in an IDE-created subdirectory.
+
+Allowed implementation languages and libraries:
+
+- C or C++ with standard libraries.
+- No other libraries besides pthread (link options -lpthread -lrt).
+
+6.2. Evaluation commands
+------------------------
+
+The evaluator will run commands equivalent to:
+
+tar xzvf yoursubmission
+pushd hw1
+make hw1
+# all tests run here
+popd
+
+Your archive layout and makefile must work with this sequence.
+
+6.3. Questions and academic integrity
+-------------------------------------
+
+Homework questions can be posted to the odtuclass forums.
+
+  Use of generative AI, other than simple completion and syntax correction in the resulting source code, is prohibited, as are code sharing and other forms of cheating.
+
+6.4. Midterm grade adjustment
+-----------------------------
+
+The midterm exam will include a question about synchronization and shared memory. 60% of the homework grade will be scaled by the score on that exam question.
+
+For example, with a homework grade of 90 and an exam-question score of 15/20:
+
+36 + 40.5 = 76.5
+
+The adjusted homework grade is 76.5.
+
+========================================================================
+
+Formatting note: This is a reader-friendly transcription of the assignment. Headings, spacing, lists, and examples have been reorganized for readability; the assignment's scheduling rules and required output strings have been retained.
