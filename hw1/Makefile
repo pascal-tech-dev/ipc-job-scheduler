@@ -1,7 +1,7 @@
 
 CC = gcc
 
-CPPFLAGS = -Iinclude
+CPPFLAGS = -Iincludes
 CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -g -O0 -pthread
 LDFLAGS = -pthread
 

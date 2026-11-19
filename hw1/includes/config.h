@@ -6,9 +6,9 @@
 #define MAX_JOBS 10000
 
 typedef struct {
-    int m;         /* Number of processor types. */
-    int n;         /* Number of nodes. */
-    int *capacity; /* Owned, row-major array: capacity[node * m + type]. */
+    int m;          /* Number of processor types. */
+    int n;          /* Number of nodes. */
+    int **capacity; /* Owned rows, accessed as capacity[node][type]. */
 } Facility;
 
 /*
